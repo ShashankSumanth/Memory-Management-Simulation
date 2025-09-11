@@ -3,6 +3,10 @@
 #include <unordered_set>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
+#include <cstring>
+#include <filesystem>
+
 using namespace std;
 
 struct Page{
@@ -94,9 +98,9 @@ class TLB{                                                      //Translation Lo
     void updateCache(int vpn, int pfn){
         if(m_cacheEntries.size() >= m_maxSize){
             int randIdx = getRand();
+            // cout << "evicted from tlb " << m_cacheEntries[randIdx] << "\n";
             m_cache.erase(m_cacheEntries[randIdx]);
             m_cacheEntries[randIdx] = vpn;
-            cout << "evicted from tlb " << randIdx << "\n";
         } else {
             m_cacheEntries.push_back(vpn);
         }
@@ -181,13 +185,14 @@ class SwapSpace{
 class MemoryManager{
 
     private:
+    int m_pageFaults{0}, m_tlbMisses{0};
     MainMemory m_mainMemory;
     TLB m_tlb;
     PageTable m_pageTable;
     SwapSpace m_swapSpace;
 
     public:
-    MemoryManager(int ram, int pageSize, int tlbSize, int addressSpace)
+    MemoryManager(int ram, int pageSize, int tlbSize, int addressSpace=64)
         : m_mainMemory{ram,pageSize}
         , m_tlb{tlbSize}
         , m_pageTable{addressSpace/pageSize}
@@ -195,22 +200,32 @@ class MemoryManager{
     {
     }
 
+    int getTLBMisses(){
+        return m_tlbMisses;
+    }
+
+    int getPageFaults(){
+        return m_pageFaults;
+    }
+    
     pair<RequestStatus,int> requestPFN(int vpn){
         while (true){
             if (m_tlb.searchPFN(vpn)){                                                      //TLB hit
-                cout << "Found in TLB " << vpn << " \n";
+                // cout << "Found in TLB " << vpn << " \n";
                 return {RequestStatus::successfullyFetched,m_tlb.retrievePFN(vpn)};
             } else {                 
-                cout << "Not found in TLB\n";                                                       //TLB miss
+                // cout << "Not found in TLB\n";                                                       //TLB miss
+                m_tlbMisses++;
                 if (m_pageTable.checkValidity(vpn)){                                        //Page table hit
-                    cout << "Page table hit\n";
+                    // cout << "Page table hit\n";
                     int pfn {m_pageTable.retrievePFN(vpn)};
                     m_tlb.updateCache(vpn,pfn);
                     continue;
                 } else {                                                                    //Page fault
-                    cout << "Page fault\n";
+                    // cout << "Page fault\n";
+                    m_pageFaults++;
                     if (m_pageTable.checkSwapinfo(vpn)){
-                        cout << "Found in swap space\n";
+                        // cout << "Found in swap space\n";
                         pair<int,int>loadResult {m_mainMemory.loadPageIntoMainMemory(vpn)};
                         int pfn {loadResult.first};
                         int swappedOut {loadResult.second};
@@ -218,8 +233,9 @@ class MemoryManager{
                         m_pageTable.resetSwap(vpn);
                         m_pageTable.setValid(vpn);
                         m_pageTable.update(vpn,pfn);
+                        m_tlb.updateCache(vpn,pfn);
                         if(swappedOut != -1){                                               //Page evicted from main memory
-                            cout << "Page evcited\n";
+                            // cout << "Page evcited\n";
                             m_swapSpace.loadIntoSwap(swappedOut);
                             m_pageTable.setSwap(swappedOut);
                             m_pageTable.resetValid(swappedOut);
@@ -233,14 +249,25 @@ class MemoryManager{
             }
         }
     }
-
 };
 
 
 int main(){
-    MemoryManager memoryManager{16,2,8,64};
-    vector<int> pageRequests{1,2,3,4,5,6,7,8,9,10,11,12,1,16};
-    for(int page:pageRequests){
-        memoryManager.requestPFN(page);
+    MemoryManager memoryManager{32,2,8};
+
+    ifstream file("D:/C++ Projects/Paging Simulator/page_request_list.txt");
+
+    if(!file.is_open()) {
+        cerr << "Error: " << strerror(errno) << "\n";
+        return 1;
     }
+
+    string pageStr;
+
+    while(getline(file,pageStr)){
+        memoryManager.requestPFN(stoi(pageStr));
+    }
+
+    cout << "TLB Misses: " << memoryManager.getTLBMisses() << "\n";
+    cout << "Page Faults: " << memoryManager.getPageFaults() << "\n";
 }
