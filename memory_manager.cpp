@@ -25,21 +25,29 @@ enum class RequestStatus{
     accessViolation,                                            //Segmentation Fault
 };
 
+enum class ReclaimationMethods{
+    LRUReclaim,
+    RandomReclaim,
+    FIFO,
+};
+
 
 class MainMemory{                                               //i.e. RAM
 
     private:
     int m_size{};
     int m_pageSize{};
-    int m_utilized{0};
-    int m_clockPtr{0};
+    int m_utilized{0}, m_clockPtr{0};                           //used for approx LRU
+    int m_mostRecentlyIn{0};                                    //used for FIFO
+    ReclaimationMethods m_reclaimMethod;
     vector<Page>m_pages;
     
 
     public:
-    MainMemory(int size, int pageSize)
+    MainMemory(int size, int pageSize, ReclaimationMethods reclaimationMethod)
         : m_size{size}
         , m_pageSize{pageSize}
+        , m_reclaimMethod{reclaimationMethod}
     {
         m_pages.assign(size/pageSize,Page());
     }
@@ -57,13 +65,32 @@ class MainMemory{                                               //i.e. RAM
         return {pfn,swappedOut};
     }
 
-    int free(){                                     //implements the clock algo to free up the main memory
+    int randomFree(){
+        return (rand() % m_pages.size());
+    }
+
+    int approxLRU(){                                                //used the clock algo
         while(m_pages[m_clockPtr].used){
-            m_pages[m_clockPtr].used=false;
-            m_clockPtr++;
-            if(m_clockPtr>=m_pages.size())m_clockPtr=0;
+            m_pages[m_clockPtr++].used=false;
+            if (m_clockPtr >= m_pages.size()) m_clockPtr = 0;
         }
         return m_clockPtr;
+    }
+
+    int firstInFirstOut(){
+        if(m_mostRecentlyIn == m_pages.size()) m_mostRecentlyIn = 0;
+        return m_mostRecentlyIn++;
+    }
+
+    int free(){                                     
+        if(m_reclaimMethod == ReclaimationMethods::LRUReclaim){
+            return approxLRU();
+        } else if (m_reclaimMethod == ReclaimationMethods::RandomReclaim){
+            return randomFree();
+        } else if (m_reclaimMethod == ReclaimationMethods::FIFO){
+            return firstInFirstOut();
+        }
+        return 0;
     }
 
 };
@@ -75,7 +102,7 @@ class TLB{                                                      //Translation Lo
     unordered_map<int,int>m_cache{};
     vector<int>m_cacheEntries{};
     
-    int getRand(){                                              //used for random eviction
+    int getRand(){                                              //Used for random eviction frim the TLB
         int randomIdx = rand()%(m_maxSize);
         return randomIdx;
     }
@@ -192,8 +219,8 @@ class MemoryManager{
     SwapSpace m_swapSpace;
 
     public:
-    MemoryManager(int ram, int pageSize, int tlbSize, int addressSpace=64)
-        : m_mainMemory{ram,pageSize}
+    MemoryManager(int ram, int pageSize, int tlbSize, int addressSpace, ReclaimationMethods reclaimationMethod)
+        : m_mainMemory{ram,pageSize,reclaimationMethod}
         , m_tlb{tlbSize}
         , m_pageTable{addressSpace/pageSize}
         , m_swapSpace{addressSpace/pageSize}
@@ -253,7 +280,7 @@ class MemoryManager{
 
 
 int main(){
-    MemoryManager memoryManager{32,2,8};
+    
 
     ifstream file("D:/C++ Projects/Paging Simulator/page_request_list.txt");
 
@@ -263,11 +290,41 @@ int main(){
     }
 
     string pageStr;
+    vector<int>pageRequests{};
 
     while(getline(file,pageStr)){
-        memoryManager.requestPFN(stoi(pageStr));
+        pageRequests.push_back(stoi(pageStr));
+    }
+    cout << "APPROXIMATE LEAST RECENTLY USED:\n";
+    MemoryManager memoryManager{32,2,8,64,ReclaimationMethods::LRUReclaim};
+
+    for(int page : pageRequests){
+        memoryManager.requestPFN(page);
     }
 
     cout << "TLB Misses: " << memoryManager.getTLBMisses() << "\n";
     cout << "Page Faults: " << memoryManager.getPageFaults() << "\n";
+    cout << "_________________________________________________________________________\n";
+
+    cout << "RANDOM RECLAIM: \n";
+    memoryManager = MemoryManager(32,2,8,64,ReclaimationMethods::RandomReclaim);
+
+    for(int page : pageRequests){
+        memoryManager.requestPFN(page);
+    }
+
+    cout << "TLB Misses: " << memoryManager.getTLBMisses() << "\n";
+    cout << "Page Faults: " << memoryManager.getPageFaults() << "\n";
+    cout << "_________________________________________________________________________\n";
+
+    cout << "FIFO: \n";
+    memoryManager = MemoryManager(32,2,8,64,ReclaimationMethods::FIFO);
+
+    for(int page : pageRequests){
+        memoryManager.requestPFN(page);
+    }
+
+    cout << "TLB Misses: " << memoryManager.getTLBMisses() << "\n";
+    cout << "Page Faults: " << memoryManager.getPageFaults() << "\n";
+    cout << "_________________________________________________________________________\n";
 }
